@@ -1,50 +1,46 @@
 import makeWASocket, { useMultiFileAuthState } from "@whiskeysockets/baileys"
+import express from "express"
 import pino from "pino"
 
-const PHONE_NUMBER = process.env.PAIR_NUMBER // REQUIRED
+const app = express()
+const PORT = process.env.PORT || 3000
+
+let latestPairCode = null
 
 async function startBot() {
-  console.log("🚀 Starting WhatsApp bot (PAIR CODE MODE)")
-
-  if (!PHONE_NUMBER) {
-    console.error("❌ PAIR_NUMBER env variable not set")
-    process.exit(1)
-  }
-
   const { state, saveCreds } = await useMultiFileAuthState("./session")
 
   const sock = makeWASocket({
     auth: state,
     logger: pino({ level: "silent" }),
     printQRInTerminal: false,
-    browser: ["Firefox", "Chrome", "1.0"]
+    browser: ["Firefox", "Android", "1.0"]
   })
 
   sock.ev.on("creds.update", saveCreds)
 
-  sock.ev.on("connection.update", async (update) => {
-    const { connection } = update
-
-    console.log("🔌 Connection:", connection)
-
-    if (
-      connection === "connecting" &&
-      !sock.authState.creds.registered
-    ) {
-      try {
-        const code = await sock.requestPairingCode(PHONE_NUMBER)
-        console.log("🔢 PAIR CODE:", code)
-        console.log("📱 WhatsApp → Linked Devices → Link with phone number")
-      } catch (err) {
-        console.error("❌ Pair code failed:", err?.message)
-        process.exit(1)
-      }
+  if (!sock.authState.creds.registered) {
+    const number = process.env.PAIR_NUMBER
+    if (!number) {
+      console.log("❌ PAIR_NUMBER not set")
+      return
     }
 
-    if (connection === "open") {
-      console.log("✅ WhatsApp connected successfully")
-    }
-  })
+    const code = await sock.requestPairingCode(number)
+    latestPairCode = code
+    console.log("🔢 PAIR CODE:", code)
+  }
 }
+
+app.get("/pair-code", (req, res) => {
+  if (!latestPairCode) {
+    return res.json({ status: "waiting" })
+  }
+  res.json({ status: "ready", code: latestPairCode })
+})
+
+app.listen(PORT, () => {
+  console.log(`🌐 Web server running on port ${PORT}`)
+})
 
 startBot()
