@@ -1,59 +1,48 @@
-import makeWASocket, {
-  useMultiFileAuthState,
-  DisconnectReason
-} from '@whiskeysockets/baileys'
-import { Boom } from '@hapi/boom'
-import readline from 'readline'
+import makeWASocket, { useMultiFileAuthState } from "@whiskeysockets/baileys"
+import pino from "pino"
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-})
+const PHONE_NUMBER = process.env.PAIR_NUMBER // REQUIRED
 
-async function startBot () {
-  const { state, saveCreds } =
-    await useMultiFileAuthState('./session')
+async function startBot() {
+  console.log("🚀 Starting WhatsApp bot (PAIR CODE MODE)")
+
+  if (!PHONE_NUMBER) {
+    console.error("❌ PAIR_NUMBER env variable not set")
+    process.exit(1)
+  }
+
+  const { state, saveCreds } = await useMultiFileAuthState("./session")
 
   const sock = makeWASocket({
     auth: state,
-    printQRInTerminal: false // IMPORTANT
+    logger: pino({ level: "silent" }),
+    printQRInTerminal: false,
+    browser: ["Firefox", "Chrome", "1.0"]
   })
 
-  sock.ev.on('creds.update', saveCreds)
+  sock.ev.on("creds.update", saveCreds)
 
-  // 🔑 PAIRING CODE FLOW
-  if (!sock.authState.creds.registered) {
-    rl.question(
-      'Enter WhatsApp number (with country code): ',
-      async (number) => {
-        number = number.replace(/[^0-9]/g, '')
+  sock.ev.on("connection.update", async (update) => {
+    const { connection } = update
 
-        const code = await sock.requestPairingCode(number)
-        console.log('📲 Pairing Code:', code)
-        console.log('Open WhatsApp → Linked Devices → Link with phone number')
-        rl.close()
+    console.log("🔌 Connection:", connection)
+
+    if (
+      connection === "connecting" &&
+      !sock.authState.creds.registered
+    ) {
+      try {
+        const code = await sock.requestPairingCode(PHONE_NUMBER)
+        console.log("🔢 PAIR CODE:", code)
+        console.log("📱 WhatsApp → Linked Devices → Link with phone number")
+      } catch (err) {
+        console.error("❌ Pair code failed:", err?.message)
+        process.exit(1)
       }
-    )
-  }
-
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect } = update
-
-    if (connection === 'open') {
-      console.log('✅ WhatsApp linked successfully')
     }
 
-    if (connection === 'close') {
-      const reason = new Boom(
-        lastDisconnect?.error
-      )?.output?.statusCode
-
-      if (reason !== DisconnectReason.loggedOut) {
-        console.log('🔄 Reconnecting...')
-        startBot()
-      } else {
-        console.log('❌ Logged out, pairing required again')
-      }
+    if (connection === "open") {
+      console.log("✅ WhatsApp connected successfully")
     }
   })
 }
