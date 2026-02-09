@@ -6,7 +6,7 @@ const app = express()
 app.use(express.json())
 
 let sock
-let currentCode = null
+let ready = false
 let busy = false
 
 async function initBot() {
@@ -20,11 +20,24 @@ async function initBot() {
   })
 
   sock.ev.on("creds.update", saveCreds)
+
+  sock.ev.on("connection.update", ({ connection }) => {
+    console.log("🔌 Connection:", connection)
+    if (connection === "open" || connection === "connecting") {
+      ready = true
+    }
+    if (connection === "close") {
+      ready = false
+    }
+  })
 }
 
 app.post("/pair", async (req, res) => {
+  if (!ready) {
+    return res.json({ error: "WhatsApp not ready. Try again later." })
+  }
   if (busy) {
-    return res.json({ error: "Already generating a code" })
+    return res.json({ error: "Already generating code" })
   }
 
   const number = req.body.number?.replace(/\D/g, "")
@@ -33,14 +46,12 @@ app.post("/pair", async (req, res) => {
   }
 
   busy = true
-  currentCode = null
 
   try {
     const code = await sock.requestPairingCode(number)
-    currentCode = code
     res.json({ success: true, code })
   } catch (e) {
-    res.json({ error: "Pairing failed. Try again later." })
+    res.json({ error: "Pairing blocked by WhatsApp. Wait 15 minutes." })
   } finally {
     busy = false
   }
