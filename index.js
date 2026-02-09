@@ -3,14 +3,16 @@ import express from "express"
 import pino from "pino"
 
 const app = express()
-const PORT = process.env.PORT || 3000
+app.use(express.json())
 
-let latestPairCode = null
+let sock
+let currentCode = null
+let busy = false
 
-async function startBot() {
+async function initBot() {
   const { state, saveCreds } = await useMultiFileAuthState("./session")
 
-  const sock = makeWASocket({
+  sock = makeWASocket({
     auth: state,
     logger: pino({ level: "silent" }),
     printQRInTerminal: false,
@@ -18,29 +20,34 @@ async function startBot() {
   })
 
   sock.ev.on("creds.update", saveCreds)
-
-  if (!sock.authState.creds.registered) {
-    const number = process.env.PAIR_NUMBER
-    if (!number) {
-      console.log("❌ PAIR_NUMBER not set")
-      return
-    }
-
-    const code = await sock.requestPairingCode(number)
-    latestPairCode = code
-    console.log("🔢 PAIR CODE:", code)
-  }
 }
 
-app.get("/pair-code", (req, res) => {
-  if (!latestPairCode) {
-    return res.json({ status: "waiting" })
+app.post("/pair", async (req, res) => {
+  if (busy) {
+    return res.json({ error: "Already generating a code" })
   }
-  res.json({ status: "ready", code: latestPairCode })
+
+  const number = req.body.number?.replace(/\D/g, "")
+  if (!number) {
+    return res.json({ error: "Invalid number" })
+  }
+
+  busy = true
+  currentCode = null
+
+  try {
+    const code = await sock.requestPairingCode(number)
+    currentCode = code
+    res.json({ success: true, code })
+  } catch (e) {
+    res.json({ error: "Pairing failed. Try again later." })
+  } finally {
+    busy = false
+  }
 })
 
-app.listen(PORT, () => {
-  console.log(`🌐 Web server running on port ${PORT}`)
+app.listen(3000, () => {
+  console.log("🌐 Server running on port 3000")
 })
 
-startBot()
+initBot()
